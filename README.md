@@ -11,5 +11,8 @@
 * **make_animation_switch.py**:
   Create an animated gif which switches between two o more images with a blurring dissolvence between them. In case more images are provided, the switching is performed passing by an image to the next one, closing the loop with the first image.
 
+* **make_landmap.py**:
+  Generate a regional map. Start from an image with a single layer with white background: pop up dialogs appear to guide the user in the process. _The plug-in is not yet complete: up to now can be used to create a basic map with sea / lakes and mountains. Future plan: add forests, rivers, roads, towns._
+
 * **smudge_all.py**:
   Smudge the full layer or a selection area in randomatic directions, creating a random smudge effect. The smudging pressure can be chosen.
