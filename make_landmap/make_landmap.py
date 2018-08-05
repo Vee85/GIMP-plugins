@@ -65,6 +65,14 @@ def colfillayer(image, layer, rgbcolor):
   pdb.gimp_context_set_foreground(oldfgcol)
 
 
+#dictonary storing the color definitions, to be used by other classes
+colordict = dict()
+colordict["grass"] = {"deep" : (76, 83, 41), "light" : (149, 149, 89)} #a dark green color, known as ditch and a light green color, known as high grass
+colordict["ground"] = {"deep" : (75, 62, 44), "light" : (167, 143, 107)} #a dark brown color, lowest dirt and a light brown color, high dirt
+colordict["sand"] = {"deep" : (150, 113, 23), "light" : (244, 164, 96)} #a relatively dark brown, known as sand dune and a light brown almost yellow, known as sandy brown
+colordict["ice"] = {"deep" : (128, 236, 217), "light" : (232, 232, 232)} #a clear blue and a dirty white
+
+
 #class to let the user setting the colors edge of a color map
 class ColorMapper(gtk.Dialog):
   #constructor
@@ -113,7 +121,7 @@ class ColorMapper(gtk.Dialog):
     self.chcol[key] = rgbcol
     self.butcolors[key].connect("color-set", self.on_butcolor_clicked, key)
     return self.butcolors[key]
-
+    
 
 #class to adjust the color levels/threshold of a layer, reproducing a simpler interface to the GIMP color levels dialog or the GIMP color threshold dialog. 
 class CLevDialog(gtk.Dialog):
@@ -1266,7 +1274,8 @@ class LocalBuilder(TLSbase):
 
     newmp.run()
     self.addingchannel = newmp.channelms
-    
+    self.addingchannel.name = self.textes["baseln"] + "mask"
+
     #hiding or removing not needed stuffs
     if newmp.chtype > 0:
       pdb.gimp_item_set_visible(newmp.bgl, False)
@@ -1318,6 +1327,7 @@ class LocalBuilder(TLSbase):
         if self.channelms is not None and ichb.get_active():
           pdb.gimp_channel_combine_masks(self.addingchannel, self.channelms, 3, 0, 0)
         infodi.destroy()
+        self.addingchannel.name = self.textes["baseln"] + "mask"
         self.appendmask(self.addingchannel)
         self.generatestep()
         self.setgenerated(True)
@@ -1675,43 +1685,20 @@ class WaterBuild(GlobalBuilder):
     pdb.gimp_displays_flush()
 
 
-#class to generate the base land (color and mask of the terrain)
-class BaseDetails(GlobalBuilder):
+class RegionChooser:
   #constructor
-  def __init__(self, image, layermask, channelmask, *args):
-    mwin = GlobalBuilder.__init__(self, image, None, layermask, channelmask, True, False, *args)
-    self.bumpmapl = None
-    self.basebumpsl = None
-    self.refbg = None
-
-    self.childsgrpmsk = []
-    
-    #internal parameters
+  def __init__(self):
     #@@@ ideally all of these: grassland, terrain, desert, arctic, underdark || these should be smaller regions rendered in other ways: forest, mountain, swamp
     self.regionlist = ["grassland", "terrain", "desert", "arctic", "custom color map"]
     self.regiontype = ["grass", "ground", "sand", "ice", "custom"]
     self.region = self.regiontype[0] #will be reinitialized in GUI costruction
 
-    self.namelist = [self.regiontype, [n + "texture" for n in self.regiontype], [n + "bumpmap" for n in self.regiontype], [n + "bumps" for n in self.regiontype]]
-    self.namechildgroups = ["small" + n + "group" for n in self.regiontype]
-    self.namechildmasks = ["small" + n + "mask" for n in self.regiontype]
-    
-    #color couples to generate gradients
-    self.colorgrassdeep = (76, 83, 41) #a dark green color, known as ditch
-    self.colorgrasslight = (149, 149, 89) #a light green color, known as high grass
-    self.colorgrounddeep = (75, 62, 44) #a dark brown color, lowest dirt
-    self.colorgroundlight = (167, 143, 107) #a light brown color, high dirt
-    self.colordesertdeep = (150, 113, 23) #a relatively dark brown, known as sand dune
-    self.colordesertlight = (244, 164, 96) #a light brown almost yellow, known as sandy brown
-    self.colorarcticdeep = (128, 236, 217) #a clear blue
-    self.colorarcticlight = (232, 232, 232) #a dirty white
-    
+  def addchooserrow(self):
     #new row
-    hbxa = gtk.HBox(spacing=10, homogeneous=True)
-    self.vbox.add(hbxa)
+    hobox = gtk.HBox(spacing=10, homogeneous=True)
     
     laba = gtk.Label("Select type of region")
-    hbxa.add(laba)
+    hobox.add(laba)
     
     boxmodela = gtk.TreeStore(gobject.TYPE_STRING, gobject.TYPE_STRING)
     #filling the model for the combobox
@@ -1727,24 +1714,60 @@ class BaseDetails(GlobalBuilder):
     cboxa.set_entry_text_column(0)
     cboxa.set_active(0)
     cboxa.connect("changed", self.on_region_changed)
-    hbxa.add(cboxa)
-    
-    #button area
-    self.add_button_quit()
-    self.add_button_generate("Generate land details")
-    self.add_button_nextprev()
+    hobox.add(cboxa)
+    return hobox
 
-    return mwin
-    
   #callback method, setting base region parameter 
   def on_region_changed(self, widget):
     refmode = widget.get_model()
     self.region = refmode.get_value(widget.get_active_iter(), 1)
-  
+
+
+#class to generate the base land (color and mask of the terrain)
+class BaseDetails(GlobalBuilder, RegionChooser):
+  #constructor
+  def __init__(self, image, layermask, channelmask, *args):
+    RegionChooser.__init__(self)
+    mwin = GlobalBuilder.__init__(self, image, None, layermask, channelmask, True, False, *args)
+    self.bumpmapl = None
+    self.basebumpsl = None
+    self.refbg = None
+
+    self.colorref = colordict
+    smtextes = {"baseln" : "smallregion", \
+    "labelext" : "small colored area", \
+    "namelist" : ["none", "random", "one side", "centered", "surroundings", "customized"], \
+    "toplab" : "In the final result: white represent where the new areas are located.", \
+    "topnestedlab" : "Position of the new area in the image."}
+    self.localbuilder = AdditionalDetBuild(smtextes, self.img, self.maskl, self.channelms, "Building smaller areas", self, gtk.DIALOG_MODAL) #title = "building...", parent = self, flag = gtk.DIALOG_MODAL, they as passed as *args
+    
+    self.choserbox = self.addchooserrow()
+    self.vbox.add(self.choserbox)
+    
+    self.namelist = [self.regiontype, [n + "texture" for n in self.regiontype], [n + "bumpmap" for n in self.regiontype], [n + "bumps" for n in self.regiontype]]
+    
+    #button area
+    self.add_button_quit()
+    self.add_button_generate("Generate land details")
+
+    self.butlocal = gtk.Button("Local areas")
+    self.action_area.add(self.butlocal)
+    self.butlocal.connect("clicked", self.on_local_clicked)
+
+    self.add_button_nextprev()
+
+    return mwin
+    
+  #callback method, showing interface to add local areas 
+  def on_local_clicked(self, widget):
+    if self.generated:
+      self.localbuilder.show_all()
+      self.localbuilder.run()
+
   #override cleaning method
   def cleandrawables(self):
-    self.deletedrawables(self.bumpmapl, self.basebumpsl, *self.childsgrpmsk)
-    del self.childsgrpmsk[:]
+    self.deletedrawables(self.bumpmapl, self.basebumpsl)
+    self.localbuilder.cleandrawables()
 
   #ovverride loading method
   def loaddrawables(self):
@@ -1757,13 +1780,8 @@ class BaseDetails(GlobalBuilder):
         self.bumpmapl = ll
       elif ll.name in self.namelist[3]:
         self.basebumpsl = ll
-      elif any([i in ll.name for i in self.namechildgroups]): #any: logical 'or' between all the elements of the list, this will catch also the group level
-        self.childsgrpmsk.append(ll)
 
-    for ll in self.img.channels:
-      if any([i in ll.name for i in self.namechildmasks]): #any: logical 'or' between all the elements of the list, this will catch also the group level
-        self.childsgrpmsk.append(ll)
-
+    self.localbuilder.loaddrawables()
     return self.loaded()
     
   #override method, generate land details
@@ -1776,53 +1794,23 @@ class BaseDetails(GlobalBuilder):
 
     #setting base color
     self.addmaskp(self.bgl)
-    self.bgl.name = self.region    
-    if self.bgl.name == "grass":
-      self.cgradmap(self.bgl, self.colorgrassdeep, self.colorgrasslight)
-    if self.bgl.name == "ground":
-      self.cgradmap(self.bgl, self.colorgrounddeep, self.colorgroundlight)
-    elif self.bgl.name == "sand":
-      self.cgradmap(self.bgl, self.colordesertdeep, self.colordesertlight)
-    elif self.bgl.name == "ice":
-      self.cgradmap(self.bgl, self.colorarcticdeep, self.colorarcticlight)
-    elif self.bgl.name == "custom":
+    self.bgl.name = self.region
+    if self.bgl.name == "custom":
       cmapper = ColorMapper("Choose a light and deep color at the edge of a gradient map", True, "Color chooser", self, gtk.DIALOG_MODAL)
       rr = cmapper.run()
       if rr == gtk.RESPONSE_OK:
-        self.cgradmap(self.bgl, cmapper.chcol["light"], cmapper.chcol["deep"])
+        self.cgradmap(self.bgl, cmapper.chcol["deep"],  cmapper.chcol["light"])
       cmapper.destroy()
-   
+    else:
+      self.cgradmap(self.bgl, self.colorref[self.bgl.name]["deep"], self.colorref[self.bgl.name]["light"])
+      
     pdb.gimp_displays_flush()
     
     #adding small areas of other region types
-    for addt in self.regiontype:
-      if addt != self.bgl.name:
-        smtextes = {"baseln" : "small" + addt, \
-        "namelist" : ["none", "random", "one side", "centered", "surroundings", "customized"], \
-        "toplab" : "In the final result: white represent where the new areas are located.", \
-        "topnestedlab" : "Position of the new area in the image."}
-        
-        if addt == "grass":
-          smtextes["labelext"] = "smaller green areas"
-          cls = (self.colorgrasslight, self.colorgrassdeep)
-        elif addt == "ground":
-          smtextes["labelext"] = "smaller terrain areas"
-          cls = (self.colorgroundlight, self.colorgrounddeep)
-        elif addt == "sand":
-          smtextes["labelext"] = "smaller desertic areas"
-          cls = (self.colordesertlight, self.colordesertdeep)
-        elif addt == "ice":
-          smtextes["labelext"] = "smaller frosted areas"
-          cls = (self.colorarcticlight, self.colorarcticdeep)
-        elif addt == "custom":
-          smtextes["labelext"] = "smaller customized areas"
-          cls = None
-          
-        smarea = AdditionalDetBuild(smtextes, self.img, self.bgl, self.maskl, self.channelms, cls, "Building smaller areas", self, gtk.DIALOG_MODAL) #title = "building...", parent = self, flag = gtk.DIALOG_MODAL, they as passed as *args
-        smarea.run()
-        self.childsgrpmsk.append(smarea.getgroupl())
-        self.childsgrpmsk.append(smarea.addingchannel)
-                  
+    self.localbuilder.show_all()
+    self.localbuilder.setbgl(self.bgl)
+    self.localbuilder.run()
+
     #generating noise
     self.noisel = self.makenoisel(self.bgl.name + "texture", 3, 3, OVERLAY_MODE)
     self.addmaskp(self.noisel)
@@ -1838,6 +1826,67 @@ class BaseDetails(GlobalBuilder):
 
     pdb.gimp_displays_flush()
     
+
+#class to generate small area of a different land type than the main one
+class AdditionalDetBuild(LocalBuilder, RegionChooser):
+  #constructor
+  def __init__(self, textes, image, layermask, channelmask, *args):
+    RegionChooser.__init__(self)
+    mwin = LocalBuilder.__init__(self, image, layermask, channelmask, True, *args)
+
+    self.refbase = None
+    self.textes = textes
+    self.colorref = colordict
+    self.namelist = [self.textes["baseln"] + "mask"]
+    
+    #Designing the interface
+    #new row
+    hbxa = gtk.HBox(spacing=10, homogeneous=True)
+    self.vbox.add(hbxa)
+    
+    laba = gtk.Label("Adding / deleting " + self.textes["labelext"] + " to the map.")
+    hbxa.add(laba)
+
+    self.choserbox = self.addchooserrow()
+    self.vbox.add(self.choserbox)
+    
+    #new row
+    self.smoothdef([0.03, 0.06, 0.1], "Select smoothing range for the area,\nit helps the blending with the main color.")
+    
+    #button area
+    self.add_button_quit()
+    self.add_button_cancel()
+    self.add_buttons_gen()
+
+    return mwin
+    
+  #override method, drawing the area
+  def generatestep(self):
+    self.copybgl(self.refbase, self.textes["baseln"])
+    
+    #setting the color
+    if self.region == "custom":
+      cmapper = ColorMapper("Choose a light and deep color at the edge of a gradient map", True, "Color chooser", self, gtk.DIALOG_MODAL)
+      rr = cmapper.run()
+      if rr == gtk.RESPONSE_OK:
+        self.cgradmap(self.bgl, cmapper.chcol["deep"],  cmapper.chcol["light"])
+      cmapper.destroy()
+    else:
+      self.cgradmap(self.bgl, self.colorref[self.region]["deep"], self.colorref[self.region]["light"])
+
+    if pdb.gimp_layer_get_mask(self.bgl) is not None:
+      pdb.gimp_layer_remove_mask(self.bgl, 1) #1 = MASK_DISCARD
+
+    maskt = self.addmaskp(self.bgl, self.addingchannel)
+    if not self.smoothbeforecomb and self.smoothval > 0:
+      pdb.plug_in_gauss(self.img, maskt, self.smoothval, self.smoothval, 0)
+
+    pdb.gimp_displays_flush()
+
+  #setting a reference to the base layer, to be called before a run, but not everytime we generated a step (so we cannot use setbeforerun method)
+  def setbgl(self, basel):
+    self.refbase = basel
+
 
 #class to generate the dirt on the terrain
 class DirtDetails(GlobalBuilder):
@@ -1941,76 +1990,6 @@ class DirtDetails(GlobalBuilder):
     cldo.destroy()
     
     pdb.gimp_displays_flush()
-
-
-#class to generate small area of a different land type than the main one
-class AdditionalDetBuild(LocalBuilder):
-  #constructor
-  def __init__(self, textes, image, basel, layermask, channelmask, colors, *args):
-    mwin = LocalBuilder.__init__(self, image, layermask, channelmask, False, *args)
-    
-    self.refbase = basel
-    self.colors = colors
-    self.clight = None
-    self.cdeep = None
-    self.textes = textes
-        
-    #Designing the interface
-    #new row
-    hbxa = gtk.HBox(spacing=10, homogeneous=True)
-    self.vbox.add(hbxa)
-    
-    laba = gtk.Label("Adding " + self.textes["labelext"] + " to the map.")
-    hbxa.add(laba)
-    
-    #new row
-    self.smoothdef([0.03, 0.06, 0.1], "Select smoothing range for the area,\nit helps the blending with the main color.")
-    
-    #button area
-    self.add_button_quit()
-    self.add_buttons_gen()
-
-    self.show_all()
-    return mwin
-  
-  #override method, clean previous drawables for regeneration. Not needed by this class as this process is done by BaseDetails
-  def cleandrawables(self):
-    self.deletedrawables(self.getgroupl())
-    
-  #override method, drawing the area
-  def generatestep(self):
-    self.addingchannel.name = self.textes["baseln"] + "mask"
-    self.clight, self.cdeep = self.colorset(self.colors)
-    
-    self.bgl = self.refbase.copy()
-    pdb.gimp_image_insert_layer(self.img, self.bgl, self.getgroupl(), 0)
-    self.bgl.name = self.textes["baseln"]
-    
-    self.cgradmap(self.bgl, self.cdeep, self.clight)
-    if pdb.gimp_layer_get_mask(self.bgl) is not None:
-      pdb.gimp_layer_remove_mask(self.bgl, 1) #1 = MASK_DISCARD
-
-    maskt = self.addmaskp(self.bgl, self.addingchannel)
-    if not self.smoothbeforecomb and self.smoothval > 0:
-      pdb.plug_in_gauss(self.img, maskt, self.smoothval, self.smoothval, 0)
-      
-    self.on_job_done()
-
-  #method to set the colors
-  def colorset(self, colors):
-    if colors is not None:
-      return colors
-    else:
-      cmapper = ColorMapper("Choose a light and deep color at the edge of a gradient map", True, "Color chooser", self, gtk.DIALOG_MODAL)
-      rr = cmapper.run()
-      if rr == gtk.RESPONSE_OK:
-        cl = cmapper.chcol["light"]
-        cd = cmapper.chcol["deep"]
-      elif rr == gtk.RESPONSE_CANCEL:
-        cl = (0, 0, 0)
-        cd = (255, 255, 255)
-      cmapper.destroy()
-      return (cl, cd)
 
 
 #class to generate the mountains
@@ -2234,7 +2213,7 @@ class MountainsBuild(LocalBuilder):
   def on_chbb_toggled(self, widget):
     self.addsnow = widget.get_active()
 
-  #callback method, set the brown color variable
+  #callback method, set the color variable
   def on_chbd_toggled(self, widget):
     self.addcol = widget.get_active()
 
@@ -2247,9 +2226,7 @@ class MountainsBuild(LocalBuilder):
     self.raisedge[k] = widget.get_active()
             
   #override method, drawing the mountains in the selection (when the method is called, a selection channel for the mountains should be already present)
-  def generatestep(self):
-    self.addingchannel.name = self.textes["baseln"] + "mask"
-    
+  def generatestep(self):    
     #improving the mask
     ctrlm = self.ControlMask()
     chrot = ctrlm.run()
@@ -2469,9 +2446,7 @@ class ForestBuild(LocalBuilder):
     return resl
 
   #override method, drawing the forest in the selection (when the method is called, a selection channel for the forest should be already present)
-  def generatestep(self):
-    self.addingchannel.name = self.textes["baseln"] + "mask"
-    
+  def generatestep(self):    
     #creating noise base for the trees, this will be used to create a detailed mask for the trees
     self.bgl = self.makenoisel(self.textes["baseln"] + "basicnoise", 16, 16, NORMAL_MODE, True, True)
     self.shapelayer, self.addingchannel = self.overdrawmask(self.bgl, self.textes["baseln"], 30, self.addingchannel, True)
